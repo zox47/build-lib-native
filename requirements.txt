@@ -1,1 +1,2 @@
 firebase-admin
+opencv-python
