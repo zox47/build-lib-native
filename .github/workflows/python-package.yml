@@ -112,18 +112,23 @@ jobs:
           source .venv/bin/activate
           p4a create --requirements=$(paste -s -d, pipgrip.lock) --arch arm64-v8a --arch armeabi-v7a --arch x86_64 --sdk-dir $ANDROID_SDK_ROOT --ndk-dir $ANDROID_NDK_HOME --dist-name mydist || { echo 'Failed to build Android package'; exit 1; }
 
-      - name: Zip mydist folder
+      - name: Get package name from requirements
+        id: get_package_name
+        run: |
+          PACKAGE_NAME=$(head -n 1 requirements.txt | cut -d'=' -f 1)
+          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+
+      - name: Rename to ${PACKAGE_NAME}.whl
         run: |
           cd /home/runner/.local/share/python-for-android/dists
-          zip -r mydist.zip mydist
+          mv mydist/dist/${PACKAGE_NAME}-*.whl ${PACKAGE_NAME}.whl || { echo 'Failed to rename wheel file'; exit 1; }
 
-      - name: List zip files
+      - name: List wheel files
         run: |
-          ls -la
-          cat pipgrip.lock
+          ls -la /home/runner/.local/share/python-for-android/dists
 
-      - name: Upload ZIP artifact
+      - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mydist
-          path: /home/runner/.local/share/python-for-android/dists/mydist.zip
+          name: wheel
+          path: /home/runner/.local/share/python-for-android/dists/${PACKAGE_NAME}.whl
