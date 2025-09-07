@@ -1,4 +1,4 @@
-name: Build and Downloaf Native Lib Package
+name: Build and Download Native Lib Package
 
 on:
   push:
@@ -15,25 +15,47 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Set up JDK 11
-        uses: actions/setup-java@v1
+        uses: actions/setup-java@v2
         with:
           java-version: '11'
+          java-package: jdk
+          architecture: x64
+          distribution: 'temurin'
 
       - name: Set up Python 3
         uses: actions/setup-python@v2
         with:
           python-version: '3.x'
 
+      - name: Clean previous builds
+        run: |
+          rm -rf .venv
+          rm -rf /home/runner/.local/share/python-for-android/dists/*
+
       - name: Upload requirements.txt
         run: |
-          # Make sure the requirements.txt is present in the repo
           if [ ! -f requirements.txt ]; then
             echo "requirements.txt not found!"
             exit 1
           fi
           cat requirements.txt
-          
-      
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gettext libiconv-hook-dev autoconf automake \
+            libtool pkg-config m4 libtool-bin libltdl-dev
+
+      - name: Verify Dependencies Installation
+        run: |
+          if ! command -v autoconf &> /dev/null; then
+            echo "autoconf could not be found"
+            exit 1
+          fi
+          if ! command -v automake &> /dev/null; then
+            echo "automake could not be found"
+            exit 1
+          fi
 
       - name: Install Python Dependencies
         run: |
@@ -41,14 +63,15 @@ jobs:
           source .venv/bin/activate
           pip install --upgrade pip
           pip install maturin
-          pip install git+https://github.com/flet-dev/python-for-android.git@3.11.6
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+          pip install git+https://github.com/kivy/python-for-android.git@1.6.0 || pip install python-for-android
           pip install --upgrade cython pipgrip
-          
+
       - name: Extract dependencies with pipgrip
         run: |
           source .venv/bin/activate
           pipgrip $(cat requirements.txt) --lock
-          
+
       - name: Set up Android SDK
         run: |
           mkdir -p $HOME/Android/Sdk/cmdline-tools
@@ -58,15 +81,26 @@ jobs:
 
           echo "ANDROID_SDK_ROOT=$HOME/Android/Sdk" >> $GITHUB_ENV
           echo "SDK_ROOT=$HOME/Android/Sdk" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=/home/runner/Android/Sdk/ndk/25.2.9519653" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/25.2.9519653" >> $GITHUB_ENV
           echo "PATH=$PATH:$HOME/Android/Sdk/cmdline-tools/latest/bin:$HOME/Android/Sdk/platform-tools:$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
           yes | $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager --install "platform-tools" "platforms;android-33" "build-tools;33.0.0"
-          $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager --list
+
+      - name: Check Android SDK Installation
+        run: |
+          if [ ! -d "$ANDROID_SDK_ROOT" ]; then
+            echo "Android SDK directory does not exist!"
+            exit 1
+          fi
+          if [ ! -f "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "SDK Manager not found!"
+            exit 1
+          fi
+
       - name: Remove version
         run: |
           sed -i 's/==.*//g' pipgrip.lock
-          
+
       - name: Install Android NDK
         run: |
           NDK_VERSION="25.2.9519653"
@@ -75,22 +109,21 @@ jobs:
       - name: Build Android Package
         id: build_package
         run: |
-          source .venv/bin/activate  # Activate virtual environment
-          p4a create --requirements=$(paste -s -d, pipgrip.lock) --arch arm64-v8a --arch armeabi-v7a --arch x86_64 --sdk-dir $ANDROID_SDK_ROOT --ndk-dir $ANDROID_NDK_HOME --dist-name mydist
-        
+          source .venv/bin/activate
+          p4a create --requirements=$(paste -s -d, pipgrip.lock) --arch arm64-v8a --arch armeabi-v7a --arch x86_64 --sdk-dir $ANDROID_SDK_ROOT --ndk-dir $ANDROID_NDK_HOME --dist-name mydist || { echo 'Failed to build Android package'; exit 1; }
 
       - name: Zip mydist folder
         run: |
           cd /home/runner/.local/share/python-for-android/dists
           zip -r mydist.zip mydist
-      
+
       - name: List zip files
         run: |
           ls -la
           cat pipgrip.lock
-      
+
       - name: Upload ZIP artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: mydist
           path: /home/runner/.local/share/python-for-android/dists/mydist.zip
